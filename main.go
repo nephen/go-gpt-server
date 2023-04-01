@@ -14,6 +14,7 @@ import (
 )
 
 const model = "text-davinci-002-render-sha"
+const chat_code = "dyhlyb"
 
 type message_struct struct {
 	Role    string `json:"role"`
@@ -79,7 +80,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	for k, v := range r.Header {
 		if k == "Chat-Code" {
 			fmt.Println(k, v)
-			if v[0] != string("12345678") {
+			if v[0] != string(chat_code) {
 				enableCors2(&w)
 				w.WriteHeader(http.StatusForbidden)
 				return
@@ -129,7 +130,7 @@ func handleConv(w http.ResponseWriter, r *http.Request) {
 	for k, v := range r.Header {
 		if k == "Chat-Code" {
 			fmt.Println(k, v)
-			if v[0] != string("12345678") {
+			if v[0] != string(chat_code) {
 				enableCors2(&w)
 				w.WriteHeader(http.StatusForbidden)
 				return
