@@ -115,6 +115,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		req.Host = target
 		b, _ := json.Marshal(chat)
 		req.Body = ioutil.NopCloser(bytes.NewBuffer(b))
+		req.ContentLength = (int64)(len(b))
 		req.Header.Set("Authorization", "Bearer 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")
 	}
 	response := func(res *http.Response) error {
