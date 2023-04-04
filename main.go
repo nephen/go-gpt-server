@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -257,75 +258,82 @@ func handleConv(w http.ResponseWriter, r *http.Request) {
 	}
 	response := func(res *http.Response) error {
 		enableCors(res)
-		// 在这里获取 HTTP 响应体
-		body, err := ioutil.ReadAll(res.Body)
-		if err != nil {
-			return err
-		}
-
-		// do something with the response body
-		bodyStr := string(body)
 		// fmt.Println(string(body))
 		fmt.Println("status: " + res.Status)
 		if res.StatusCode == 200 {
 			if r.Method == "GET" {
-				value := string(body)
+				// 在这里获取 HTTP 响应体
+				body, err := ioutil.ReadAll(res.Body)
+				if err != nil {
+					return err
+				}
+				cacheValue := string(body)
 				if apiType != "conversations" {
 					var conversationItems conversation_items_struct
 					// Unmarshal
 					err = json.Unmarshal(body, &conversationItems)
 					if err != nil {
-						fmt.Println("Unmarshal", err.Error())
+						fmt.Println("conversationItems Unmarshal", err.Error())
+						return err
 					}
 					fmt.Println("conversationItems:", conversationItems)
 					// Marshal
 					conversationItemsJson, err := json.Marshal(conversationItems)
 					if err != nil {
 						fmt.Println("Failed to convert to JSON:", err)
+						return err
 					}
 					conversationItemsJsonStr := string(conversationItemsJson)
-					value = conversationItemsJsonStr
-					bodyStr = conversationItemsJsonStr
+					cacheValue = conversationItemsJsonStr
 				}
-				c.Set(key, value, cache.DefaultExpiration)
-				println("cached key: ", key)
+				// 注意：必须把响应体重新设置回去，否则客户端无法接收到数据
+				res.Body = ioutil.NopCloser(bytes.NewBufferString(cacheValue))
+				res.ContentLength = (int64)(len(cacheValue))
+				c.Set(key, cacheValue, cache.NoExpiration)
+				fmt.Printf("cached key: %v, value: %v", key, cacheValue)
 			} else {
 				// deleteCacheByPrefix(c, "/conv?")
 				key := "/conv:conversation/" + conversationIdBak
 				value, found := c.Get(key)
 				if found {
-					fmt.Println("data====>", string(body))
-					firstData := strings.Split(string(body), "\n")[0]
-					fmt.Println("first:", firstData[5:])
-					firstDataByte := []byte(firstData)
-					var conversationMsgs conversation_msgs_struct
-					// Unmarshal
-					err = json.Unmarshal(firstDataByte[5:], &conversationMsgs)
+					reader := bufio.NewReader(res.Body)
+					message, err := reader.ReadString('\n')
 					if err != nil {
-						fmt.Println("conversation_data_struct Unmarshal", err.Error())
+						log.Println(err)
+						return err
 					} else {
-						fmt.Println("conversationMsgs:", conversationMsgs)
-
-						var conversationItems conversation_items_struct
+						firstDataByte := []byte(message)[5:]
+						fmt.Println("data:", message[5:])
+						var conversationMsgs conversation_msgs_struct
 						// Unmarshal
-						fmt.Println("value: ", value)
-						valueString, ok := value.(string)
-						if !ok {
-							fmt.Println("valueString err")
+						err := json.Unmarshal(firstDataByte, &conversationMsgs)
+						if err != nil {
+							fmt.Println("conversation_data_struct Unmarshal", err.Error())
+							return err
 						} else {
-							err = json.Unmarshal([]byte(valueString), &conversationItems)
-							if err != nil {
-								fmt.Println("conversationItems Unmarshal", err.Error())
-							} else {
-								fmt.Println("conversationItems:", conversationItems)
+							fmt.Println("conversationMsgs:", conversationMsgs)
 
-								conversationItems.CurrentNode = conversationMsgs.Message.Id
-								// Marshal
-								conversationItemsJson, err := json.Marshal(conversationItems)
+							var conversationItems conversation_items_struct
+							// Unmarshal
+							fmt.Println("value: ", value)
+							valueString, ok := value.(string)
+							if !ok {
+								fmt.Println("valueString err")
+							} else {
+								err = json.Unmarshal([]byte(valueString), &conversationItems)
 								if err != nil {
-									fmt.Println("Failed to convert to JSON:", err.Error())
+									fmt.Println("conversationItems Unmarshal", err.Error())
 								} else {
-									c.Set(key, string(conversationItemsJson), cache.DefaultExpiration)
+									fmt.Println("conversationItems:", conversationItems)
+
+									conversationItems.CurrentNode = conversationMsgs.Message.Id
+									// Marshal
+									conversationItemsJson, err := json.Marshal(conversationItems)
+									if err != nil {
+										fmt.Println("Failed to convert to JSON:", err.Error())
+									} else {
+										c.Set(key, string(conversationItemsJson), cache.NoExpiration)
+									}
 								}
 							}
 						}
@@ -333,11 +341,6 @@ func handleConv(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-
-		// 注意：必须把响应体重新设置回去，否则客户端无法接收到数据
-		res.Body = ioutil.NopCloser(bytes.NewBufferString(bodyStr))
-		res.ContentLength = (int64)(len(bodyStr))
-
 		return nil
 	}
 	proxy := &httputil.ReverseProxy{Director: director, ModifyResponse: response}
