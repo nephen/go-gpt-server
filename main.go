@@ -8,13 +8,17 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/patrickmn/go-cache"
 )
 
 const model = "text-davinci-002-render-sha"
 const chat_code = "dyhlyb"
+
+var c *cache.Cache
 
 type message_struct struct {
 	Role    string `json:"role"`
@@ -33,6 +37,32 @@ type conversation_struct struct {
 	ConversationID  string `json:"conversation_id"`
 }
 
+type conversation_items_struct struct {
+	CurrentNode string  `json:"current_node"`
+	Title       string  `json:"title"`
+	UpdateTime  float64 `json:"update_time"`
+}
+
+type conversation_msg_struct struct {
+	Id string `json:"id"`
+}
+
+type conversation_msgs_struct struct {
+	ConversationID string                  `json:"conversation_id"`
+	Message        conversation_msg_struct `json:"message"`
+}
+
+// 删除匹配某个前缀的缓存项
+func deleteCacheByPrefix(c *cache.Cache, prefix string) {
+	keys := c.Items()
+	for k := range keys {
+		if strings.HasPrefix(k, prefix) {
+			c.Delete(k)
+			println("delete cache: ", k)
+		}
+	}
+}
+
 func enableCors(w *http.Response) {
 	(*w).Header.Set("Access-Control-Allow-Origin", "*")
 	(*w).Header.Set("Access-Control-Allow-Headers", "*")
@@ -47,6 +77,11 @@ func enableCors2(w *http.ResponseWriter) {
 	(*w).Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	(*w).Header().Set("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers, Content-Type")
 	(*w).Header().Set("Access-Control-Allow-Credentials", "true")
+}
+
+func init() {
+	// 设置超时时间和清理时间
+	c = cache.New(5*time.Minute, 10*time.Minute)
 }
 
 func handleSSE(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +113,7 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 
 func handleChat(w http.ResponseWriter, r *http.Request) {
 	for k, v := range r.Header {
-		if k == "Chat-Code" {
+		if k == "authorization" {
 			fmt.Println(k, v)
 			if v[0] != string(chat_code) {
 				enableCors2(&w)
@@ -129,7 +164,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 func handleConv(w http.ResponseWriter, r *http.Request) {
 	var apiType string
 	for k, v := range r.Header {
-		if k == "Chat-Code" {
+		if k == "authorization" {
 			fmt.Println(k, v)
 			if v[0] != string(chat_code) {
 				enableCors2(&w)
@@ -156,9 +191,23 @@ func handleConv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := r.URL.String() + ":" + apiType
+	println(key)
+
+	if r.Method == "GET" {
+		value, found := c.Get(key)
+		if found {
+			fmt.Printf("get key: %v, value:%v\n", key, value)
+			enableCors2(&w)
+			fmt.Fprintf(w, value.(string))
+			return
+		}
+	}
+
 	target := "107.148.26.186:8080"
 
 	var body string
+	var conversationIdBak string
 	if apiType == "conversation" {
 		var conversation conversation_struct
 		// Read body
@@ -173,6 +222,7 @@ func handleConv(w http.ResponseWriter, r *http.Request) {
 			fmt.Println("Unmarshal", err.Error())
 		}
 		fmt.Println("conversation:", conversation)
+		conversationIdBak = conversation.ConversationID
 
 		body = fmt.Sprintf(`
 		{
@@ -207,6 +257,87 @@ func handleConv(w http.ResponseWriter, r *http.Request) {
 	}
 	response := func(res *http.Response) error {
 		enableCors(res)
+		// 在这里获取 HTTP 响应体
+		body, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+
+		// do something with the response body
+		bodyStr := string(body)
+		// fmt.Println(string(body))
+		fmt.Println("status: " + res.Status)
+		if res.StatusCode == 200 {
+			if r.Method == "GET" {
+				value := string(body)
+				if apiType != "conversations" {
+					var conversationItems conversation_items_struct
+					// Unmarshal
+					err = json.Unmarshal(body, &conversationItems)
+					if err != nil {
+						fmt.Println("Unmarshal", err.Error())
+					}
+					fmt.Println("conversationItems:", conversationItems)
+					// Marshal
+					conversationItemsJson, err := json.Marshal(conversationItems)
+					if err != nil {
+						fmt.Println("Failed to convert to JSON:", err)
+					}
+					conversationItemsJsonStr := string(conversationItemsJson)
+					value = conversationItemsJsonStr
+					bodyStr = conversationItemsJsonStr
+				}
+				c.Set(key, value, cache.DefaultExpiration)
+				println("cached key: ", key)
+			} else {
+				// deleteCacheByPrefix(c, "/conv?")
+				key := "/conv:conversation/" + conversationIdBak
+				value, found := c.Get(key)
+				if found {
+					fmt.Println("data====>", string(body))
+					firstData := strings.Split(string(body), "\n")[0]
+					fmt.Println("first:", firstData[5:])
+					firstDataByte := []byte(firstData)
+					var conversationMsgs conversation_msgs_struct
+					// Unmarshal
+					err = json.Unmarshal(firstDataByte[5:], &conversationMsgs)
+					if err != nil {
+						fmt.Println("conversation_data_struct Unmarshal", err.Error())
+					} else {
+						fmt.Println("conversationMsgs:", conversationMsgs)
+
+						var conversationItems conversation_items_struct
+						// Unmarshal
+						fmt.Println("value: ", value)
+						valueString, ok := value.(string)
+						if !ok {
+							fmt.Println("valueString err")
+						} else {
+							err = json.Unmarshal([]byte(valueString), &conversationItems)
+							if err != nil {
+								fmt.Println("conversationItems Unmarshal", err.Error())
+							} else {
+								fmt.Println("conversationItems:", conversationItems)
+
+								conversationItems.CurrentNode = conversationMsgs.Message.Id
+								// Marshal
+								conversationItemsJson, err := json.Marshal(conversationItems)
+								if err != nil {
+									fmt.Println("Failed to convert to JSON:", err.Error())
+								} else {
+									c.Set(key, string(conversationItemsJson), cache.DefaultExpiration)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// 注意：必须把响应体重新设置回去，否则客户端无法接收到数据
+		res.Body = ioutil.NopCloser(bytes.NewBufferString(bodyStr))
+		res.ContentLength = (int64)(len(bodyStr))
+
 		return nil
 	}
 	proxy := &httputil.ReverseProxy{Director: director, ModifyResponse: response}
