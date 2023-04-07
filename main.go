@@ -114,7 +114,7 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 
 func handleChat(w http.ResponseWriter, r *http.Request) {
 	for k, v := range r.Header {
-		if k == "authorization" {
+		if k == "Authorization" {
 			fmt.Println(k, v)
 			if v[0] != string(chat_code) {
 				enableCors2(&w)
@@ -165,7 +165,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 func handleConv(w http.ResponseWriter, r *http.Request) {
 	var apiType string
 	for k, v := range r.Header {
-		if k == "authorization" {
+		if k == "Authorization" {
 			fmt.Println(k, v)
 			if v[0] != string(chat_code) {
 				enableCors2(&w)
@@ -178,6 +178,7 @@ func handleConv(w http.ResponseWriter, r *http.Request) {
 			apiType = v[0]
 			r.Header.Del(k)
 		}
+		// fmt.Println(k, v)
 	}
 
 	if r.Method == "OPTIONS" {
