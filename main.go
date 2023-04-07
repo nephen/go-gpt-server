@@ -104,8 +104,8 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		log.Panic("server not support")
 	}
-	for i := 0; i < 10; i++ {
-		time.Sleep(5 * time.Second)
+	for i := 0; i < 2; i++ {
+		time.Sleep(2 * time.Second)
 		fmt.Fprintf(w, "data: %d%s%s%s\n\n", i, appId[0], page[0], pageSize[0])
 		flusher.Flush()
 	}
