@@ -14,8 +14,9 @@ SECRET_KEY= # 生产token的key
 ```
 
 ### 运行方式
-直接运行二进制文件即可，如果要走域名来访问接口，需要自己搭建nginx反向代理。
+设置完根目录下的.env文件后，直接运行二进制文件即可，如果要走域名来访问接口，需要自己搭建nginx反向代理。
 ```sh
+cp .env.example .env
 nohup ./go-gpt-server &
 ```
 代理配置：
