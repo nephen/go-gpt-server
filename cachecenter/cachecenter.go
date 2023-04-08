@@ -20,7 +20,7 @@ func deleteCacheByPrefix(c *cache.Cache, prefix string) {
 	for k := range keys {
 		if strings.HasPrefix(k, prefix) {
 			c.Delete(k)
-			println("delete cache: ", k)
+			println("delete cache:", k)
 		}
 	}
 }

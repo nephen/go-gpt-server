@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>API TEST</title>
+</head>
+
+<body>
+    <div id="app">
+        <div>
+            <span>token</span>
+            <input v-model="chatCode">
+        </div>
+        <div>
+            <input v-model="question">
+            <button @click="sse">sse</button>
+            <button @click="chat">chatGpt</button>
+            <button @click="getConvs">getConvs</button>
+            <button @click="getConv">getConv</button>
+            <button @click="startConv">startConv</button>
+        </div>
+        <p>{{answer}}</p>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <!-- https://github.com/mpetazzoni/sse.js -->
+    <script src="./js/sse.js"></script>
+    <script>
+        var app = new Vue({
+            el: "#app",
+            data: {
+                chatCode: '',
+                question: "Hello!",
+                answer: "waiting...",
+                conversationId: "",
+                parentMessageID: ""
+            },
+            methods: {
+                sse: function () {
+                    let url = 'http://localhost:8000/event?appId=1&page=4&pageSize=5'
+                    var source = new SSE(url, {
+                        headers: { 'Content-Type': 'application/json', 'authorization': this.chatCode },
+                    });
+                    this.answer = ''
+                    source.addEventListener('message', e => {
+                        this.answer += '\r\n' + e.data
+                    });
+                    source.addEventListener('close', e => {
+                        this.answer += '\r\n' + e.data
+                    });
+                    source.stream();
+                },
+                chat: function () {
+                    let url = 'http://localhost:8000/chat'
+                    let body = { 'model': 'gpt-3.5-turbo', 'stream': true, 'messages': [{ 'role': 'user', 'content': this.question }] }
+                    var source = new SSE(url, {
+                        headers: { 'Content-Type': 'application/json', 'authorization': this.chatCode },
+                        payload: JSON.stringify(body)
+                    });
+                    this.answer = ''
+                    source.addEventListener('message', e => {
+                        if (e.data !== '[DONE]') {
+                            var payload = JSON.parse(e.data);
+                            if (payload.choices[0].delta.content !== undefined && payload.choices[0].delta.content !== '') {
+                                this.answer += payload.choices[0].delta.content
+                            }
+                        }
+                    });
+                    source.stream();
+                },
+                getConvs: function () {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', 'http://localhost:8000/conv?offset=0&limit=1', true);
+
+                    let headers = { 'authorization': this.chatCode, 'Chat-type': 'conversations' }
+                    for (var header in headers) {
+                        xhr.setRequestHeader(header, headers[header]);
+                    }
+
+                    xhr.onload = (e) => {
+                        var payload = JSON.parse(e.target.response);
+                        if (payload !== undefined) {
+                            console.log(payload)
+                            this.conversationId = payload.items[0].id
+                        }
+                    };
+
+                    xhr.send(null);
+                },
+                getConv: function () {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', 'http://localhost:8000/conv', true);
+
+                    let headers = { 'authorization': this.chatCode, 'Chat-type': 'conversation/' + this.conversationId }
+                    for (var header in headers) {
+                        xhr.setRequestHeader(header, headers[header]);
+                    }
+
+                    xhr.onload = (e) => {
+                        var payload = JSON.parse(e.target.response);
+                        if (payload !== undefined) {
+                            console.log(payload)
+                            this.parentMessageID = payload.current_node
+                        }
+                    };
+
+                    xhr.send(null);
+                },
+                startConv: function () {
+                    let url = 'http://localhost:8000/conv'
+                    let body = {
+                        "content": this.question,
+                        "parent_message_id": this.parentMessageID,
+                        "conversation_id": this.conversationId
+                    }
+                    console.log(body)
+                    var source = new SSE(url, {
+                        headers: { 'Content-Type': 'application/json', 'authorization': this.chatCode, 'Chat-type': 'conversation', 'Accept': 'text/event-stream' },
+                        payload: JSON.stringify(body)
+                    });
+                    this.answer = ''
+                    source.addEventListener('message', e => {
+                        if (e.data != '[DONE]' && e.data != '[DONE]event: closeclose') {
+                            var payload = JSON.parse(e.data);
+                            if (payload !== undefined) {
+                                this.conversationId = payload.conversation_id
+                                this.parentMessageID = payload.message.id
+                                this.answer = payload.message.content.parts[0]
+                            }
+                        }
+                    });
+                    source.stream();
+                }
+            },
+        })
+    </script>
+</body>
+
+</html>

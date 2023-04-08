@@ -15,12 +15,12 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			println(err.Error())
 			if tk != chat_code {
-				println("Invalid token: ", tk)
+				println("Invalid token:", tk)
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
 		}
-		println("auth pass ", id)
+		println("auth pass", id)
 		r.Header.Add("UserId", id)
 		r.Header.Del("Authorization")
 		// 鉴权通过，调用下一个handler

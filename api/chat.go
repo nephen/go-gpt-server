@@ -49,6 +49,9 @@ func HandleChat(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	response := func(res *http.Response) error {
+		println("proxy status:", res.Status)
+		// 删除重复的响应头
+		res.Header.Del("Access-Control-Allow-Origin")
 		return nil
 	}
 	proxy := &httputil.ReverseProxy{Director: director, ModifyResponse: response}
