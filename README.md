@@ -14,12 +14,12 @@ SECRET_KEY= # 生产token的key
 ```
 
 ### 运行方式
-设置完根目录下的.env文件后，直接运行二进制文件即可，如果要走域名来访问接口，需要自己搭建nginx反向代理。
+设置完根目录下的.env文件后，直接运行二进制文件即可，如果要走域名来访问接口，需要自己搭建nginx反向代理，配置如下。
 ```sh
 cp .env.example .env
 nohup ./go-gpt-server &
 ```
-代理配置：
+nginx代理配置：
 ```
 server {
 	listen 80;
@@ -36,7 +36,7 @@ server {
 ```
 
 ### 接口调用
-具体调用方式见html目录下提供的案例。
+具体调用方式见html目录下提供的sample案例，实际项目参考[openai-quickstart-vue](https://github.com/nephen/openai-quickstart-vue)。
 1. token
 生成一定期限的token，供客户端接口调用时使用。
     ```sh
