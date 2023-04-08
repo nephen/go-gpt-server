@@ -36,7 +36,7 @@ func HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Println("chat:", chat)
 
-	target := "107.148.26.186:5566"
+	target := os.Getenv("API_PROXY")
 	director := func(req *http.Request) {
 		req.URL.Scheme = "http"
 		req.URL.Host = target

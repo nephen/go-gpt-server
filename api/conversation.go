@@ -59,7 +59,7 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	target := "107.148.26.186:8080"
+	target := os.Getenv("UNOFFICIAL_PROXY")
 
 	var reqBody string
 	var conversationIdBak string

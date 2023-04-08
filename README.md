@@ -3,6 +3,16 @@
 GOARCH=amd64 GOOS=linux go build
 ```
 
+### 环境变量
+编辑根目录下面的.env文件
+```sh
+API_PROXY= # api代理地址
+CHAT_API_KEY= # apikey
+UNOFFICIAL_PROXY= # 非官方代理地址
+ACCESS_TOKEN= # 非官方accessToken
+SECRET_KEY= # 生产token的key
+```
+
 ### 运行方式
 直接运行二进制文件即可，如果要走域名来访问接口，需要自己搭建nginx反向代理。
 ```sh
