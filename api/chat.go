@@ -7,9 +7,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
+	"os"
 )
-
-const apiKey = "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"
 
 type message_struct struct {
 	Role    string `json:"role"`
@@ -46,7 +45,7 @@ func HandleChat(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(chat)
 		req.Body = ioutil.NopCloser(bytes.NewBuffer(b))
 		req.ContentLength = (int64)(len(b))
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Authorization", "Bearer "+os.Getenv("CHAT_API_KEY"))
 	}
 	response := func(res *http.Response) error {
 		println("proxy status:", res.Status)

@@ -3,18 +3,17 @@ package middle
 import (
 	"go-gpt-server/token"
 	"net/http"
+	"os"
 )
-
-const chat_code = "dyhlyb"
 
 // 鉴权中间件
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tk := r.Header.Get("Authorization")
-		id, err := token.ValidateToken(tk, chat_code)
+		id, err := token.ValidateToken(tk, os.Getenv("SECRET_KEY"))
 		if err != nil {
 			println(err.Error())
-			if tk != chat_code {
+			if tk != os.Getenv("SECRET_KEY") {
 				println("Invalid token:", tk)
 				w.WriteHeader(http.StatusForbidden)
 				return
