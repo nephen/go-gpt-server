@@ -11,12 +11,15 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/patrickmn/go-cache"
 )
 
 const model = "text-davinci-002-render-sha"
+
+var mutex sync.Mutex
 
 type conversation_struct struct {
 	Content         string `json:"content"`
@@ -58,6 +61,22 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	getLocked := false
+	if r.Method == "POST" {
+		if mutex.TryLock() {
+			getLocked = true
+		} else {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+	}
+
+	defer func() {
+		if getLocked {
+			mutex.Unlock()
+		}
+	}()
 
 	target := os.Getenv("UNOFFICIAL_PROXY")
 
