@@ -130,7 +130,7 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 		conversation.Content = strings.ReplaceAll(conversation.Content, "\n", "")
 		conversationIdBak = conversation.ConversationID
 
-		// 是否需要新创建窗口
+		// 是否需要新创建会话
 		if conversation.ParentMessageID == "" || conversation.ConversationID == "" {
 			conversation.ParentMessageID = uuid.NewString()
 		}
