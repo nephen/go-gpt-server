@@ -1,20 +1,22 @@
 package main
 
 import (
-	"log"
+	"flag"
 	"net/http"
 
 	"go-gpt-server/api"
 	"go-gpt-server/middle"
-
-	"github.com/joho/godotenv"
 )
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error loading .env file: %v", err)
+	var clearConvs bool
+	flag.BoolVar(&clearConvs, "clear", false, "clear all conversations")
+	flag.Parse()
+
+	if clearConvs {
+		api.ClearConvs()
 	}
+
 	http.Handle("/event", middle.EnableCors(middle.HandleOptions(http.HandlerFunc(api.HandleSSE))))
 	http.Handle("/token", http.HandlerFunc(api.GenToken))
 	http.Handle("/chat", middle.EnableCors(middle.HandleOptions(middle.AuthMiddleware(http.HandlerFunc(api.HandleChat)))))

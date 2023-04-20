@@ -6,20 +6,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"go-gpt-server/cachecenter"
+	_ "go-gpt-server/env"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"strings"
 	"sync"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
 	"github.com/patrickmn/go-cache"
 )
 
 const model = "text-davinci-002-render-sha"
 
-var mutex sync.Mutex
+var (
+	mutex         sync.Mutex
+	chatGPTClient *resty.Client
+	firstBoot     bool
+)
+
+type conversations_struct struct {
+	Total int `json:"total"`
+}
 
 type conversation_struct struct {
 	Content         string `json:"content"`
@@ -40,6 +51,25 @@ type conversation_msg_struct struct {
 type conversation_msgs_struct struct {
 	ConversationID string                  `json:"conversation_id"`
 	Message        conversation_msg_struct `json:"message"`
+}
+
+func init() {
+	chatGPTClient = resty.New().SetBaseURL("http://" + os.Getenv("UNOFFICIAL_PROXY"))
+	chatGPTClient.SetHeader("Authorization", os.Getenv("ACCESS_TOKEN"))
+	firstBoot = true
+}
+
+func ClearConvs() {
+	_, err := chatGPTClient.R().
+		SetBody(map[string]bool{
+			"is_visible": false,
+		}).
+		Patch("/conversations")
+	if err != nil {
+		println(err.Error())
+		return
+	}
+	println("Clear all conversations")
 }
 
 func HandleConv(w http.ResponseWriter, r *http.Request) {
@@ -96,8 +126,14 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 			fmt.Println("Unmarshal", err.Error())
 		}
 		fmt.Println("conversation:", conversation)
+		// 去掉换行
+		conversation.Content = strings.ReplaceAll(conversation.Content, "\n", "")
 		conversationIdBak = conversation.ConversationID
 
+		// 是否需要新创建窗口
+		if conversation.ParentMessageID == "" || conversation.ConversationID == "" {
+			conversation.ParentMessageID = uuid.NewString()
+		}
 		reqBody = fmt.Sprintf(`
 		{
 			"action": "next",
@@ -139,8 +175,28 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					return err
 				}
-				cacheValue := string(resBody)
-				if apiType != "conversations" {
+				var bodyValue string
+				needCache := true
+				if apiType == "conversations" {
+					var conversations conversations_struct
+					// Unmarshal
+					err = json.Unmarshal(resBody, &conversations)
+					if err != nil {
+						fmt.Println("conversations Unmarshal", err.Error())
+						return err
+					}
+					bodyValue = string(resBody)
+					if conversations.Total == 0 { // 不需要缓存
+						fmt.Println("total 0, no need cache", bodyValue)
+						needCache = false
+						firstBoot = false
+					} else if firstBoot { // 不需要缓存
+						bodyValue = "{\"items\":[],\"total\":0,\"limit\":1,\"offset\":0,\"has_missing_conversations\":false}"
+						needCache = false
+						firstBoot = false
+						fmt.Println("first boot, no need cache", bodyValue)
+					}
+				} else {
 					var conversationItems conversation_items_struct
 					// Unmarshal
 					err = json.Unmarshal(resBody, &conversationItems)
@@ -156,14 +212,16 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 						return err
 					}
 					conversationItemsJsonStr := string(conversationItemsJson)
-					cacheValue = conversationItemsJsonStr
+					bodyValue = conversationItemsJsonStr
 				}
 				// 注意：必须把响应体重新设置回去，否则客户端无法接收到数据
-				res.Body = ioutil.NopCloser(bytes.NewBufferString(cacheValue))
-				res.ContentLength = (int64)(len(cacheValue))
+				res.Body = ioutil.NopCloser(bytes.NewBufferString(bodyValue))
+				res.ContentLength = (int64)(len(bodyValue))
 				// 读出来后缓存起来
-				cachecenter.C.Set(key, cacheValue, cache.NoExpiration)
-				fmt.Printf("cached key: %v, value: %v\n", key, cacheValue)
+				if needCache {
+					cachecenter.C.Set(key, bodyValue, cache.NoExpiration)
+					fmt.Printf("cached key: %v, value: %v\n", key, bodyValue)
+				}
 			} else if r.Method == "POST" && !getParentId { // 流传输中，只要进来一次就行了
 				// deleteCacheByPrefix(c, "/conv?")
 				key := "/conv:conversation/" + conversationIdBak

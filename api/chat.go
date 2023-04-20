@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	_ "go-gpt-server/env"
 	"io/ioutil"
 	"net/http"
 	"net/http/httputil"

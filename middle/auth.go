@@ -1,6 +1,7 @@
 package middle
 
 import (
+	_ "go-gpt-server/env"
 	"go-gpt-server/token"
 	"net/http"
 	"os"
