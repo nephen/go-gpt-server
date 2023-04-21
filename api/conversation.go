@@ -126,8 +126,8 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 			fmt.Println("Unmarshal", err.Error())
 		}
 		fmt.Println("conversation:", conversation)
-		// 去掉换行
-		conversation.Content = strings.ReplaceAll(conversation.Content, "\n", "")
+		// 换行转义
+		conversation.Content = strings.ReplaceAll(conversation.Content, "\n", "\\n")
 		conversationIdBak = conversation.ConversationID
 
 		// 是否需要新创建会话
