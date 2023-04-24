@@ -11,6 +11,7 @@ import (
 func main() {
 	var clearConvs bool
 	flag.BoolVar(&clearConvs, "clear", false, "clear all conversations")
+	flag.BoolVar(&api.MultiSession, "multi", false, "support multi conversations")
 	flag.Parse()
 
 	if clearConvs {

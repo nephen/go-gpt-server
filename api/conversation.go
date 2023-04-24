@@ -29,6 +29,7 @@ var (
 	chatGPTClient *resty.Client
 	firstBoot     bool
 	sessionLocker *SessionLocker
+	MultiSession  bool
 )
 
 type conversations_struct struct {
@@ -87,6 +88,7 @@ func init() {
 	chatGPTClient = resty.New().SetBaseURL("http://" + os.Getenv("UNOFFICIAL_PROXY"))
 	chatGPTClient.SetHeader("Authorization", os.Getenv("ACCESS_TOKEN"))
 	firstBoot = true
+	MultiSession = false
 
 	// Create a new session locker
 	sessionLocker = NewSessionLocker()
@@ -174,9 +176,13 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 对单独的会话加锁
+	sessionId := "single"
+	if MultiSession {
+		sessionId = conversationIdBak
+	}
 	getLocked := false
 	if r.Method == "POST" {
-		if sessionLocker.Lock(conversationIdBak) {
+		if sessionLocker.Lock(sessionId) {
 			getLocked = true
 		} else {
 			w.WriteHeader(http.StatusConflict)
@@ -186,7 +192,7 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		if getLocked {
-			sessionLocker.Unlock(conversationIdBak)
+			sessionLocker.Unlock(sessionId)
 		}
 	}()
 
