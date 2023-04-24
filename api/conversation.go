@@ -232,7 +232,7 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 						fmt.Println("total 0, no need cache", bodyValue)
 						needCache = false
 						firstBoot = false
-					} else if firstBoot || conversations.Total < CONVERSATION_NUM { // 不需要缓存
+					} else if firstBoot || (MultiSession && conversations.Total < CONVERSATION_NUM) { // 不需要缓存
 						bodyValue = `{"items":[],"total":0,"limit":1,"offset":0,"has_missing_conversations":false}`
 						needCache = false
 						firstBoot = false
