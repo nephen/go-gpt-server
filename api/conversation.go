@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -21,11 +22,13 @@ import (
 )
 
 const model = "text-davinci-002-render-sha"
+const CONVERSATION_NUM = 5
 
 var (
 	mutex         sync.Mutex
 	chatGPTClient *resty.Client
 	firstBoot     bool
+	sessionLocker *SessionLocker
 )
 
 type conversations_struct struct {
@@ -53,10 +56,40 @@ type conversation_msgs_struct struct {
 	Message        conversation_msg_struct `json:"message"`
 }
 
+type SessionLocker struct {
+	locks map[string]*sync.Mutex
+}
+
+func NewSessionLocker() *SessionLocker {
+	return &SessionLocker{
+		locks: make(map[string]*sync.Mutex),
+	}
+}
+
+func (s *SessionLocker) Lock(sessionID string) bool {
+	lock, ok := s.locks[sessionID]
+	if !ok {
+		lock = &sync.Mutex{}
+		s.locks[sessionID] = lock
+	}
+	return lock.TryLock()
+}
+
+func (s *SessionLocker) Unlock(sessionID string) {
+	lock, ok := s.locks[sessionID]
+	if !ok {
+		panic(fmt.Sprintf("trying to unlock a non-existing session lock: %s", sessionID))
+	}
+	lock.Unlock()
+}
+
 func init() {
 	chatGPTClient = resty.New().SetBaseURL("http://" + os.Getenv("UNOFFICIAL_PROXY"))
 	chatGPTClient.SetHeader("Authorization", os.Getenv("ACCESS_TOKEN"))
 	firstBoot = true
+
+	// Create a new session locker
+	sessionLocker = NewSessionLocker()
 }
 
 func ClearConvs() {
@@ -92,26 +125,10 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	getLocked := false
-	if r.Method == "POST" {
-		if mutex.TryLock() {
-			getLocked = true
-		} else {
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
-	}
-
-	defer func() {
-		if getLocked {
-			mutex.Unlock()
-		}
-	}()
-
 	target := os.Getenv("UNOFFICIAL_PROXY")
 
 	var reqBody string
-	var conversationIdBak string
+	conversationIdBak := "empty"
 	if apiType == "conversation" {
 		var conversation conversation_struct
 		// Read body
@@ -128,7 +145,9 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("conversation:", conversation)
 		// 换行转义
 		conversation.Content = strings.ReplaceAll(conversation.Content, "\n", "\\n")
-		conversationIdBak = conversation.ConversationID
+		if conversation.ConversationID != "" {
+			conversationIdBak = conversation.ConversationID
+		}
 
 		// 是否需要新创建会话
 		if conversation.ParentMessageID == "" || conversation.ConversationID == "" {
@@ -153,6 +172,23 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 			"conversation_id": "%s"
 		},`, uuid.NewString(), conversation.Content, conversation.ParentMessageID, model, conversation.ConversationID)
 	}
+
+	// 对单独的会话加锁
+	getLocked := false
+	if r.Method == "POST" {
+		if sessionLocker.Lock(conversationIdBak) {
+			getLocked = true
+		} else {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+	}
+
+	defer func() {
+		if getLocked {
+			sessionLocker.Unlock(conversationIdBak)
+		}
+	}()
 
 	director := func(req *http.Request) {
 		req.URL.Scheme = "http"
@@ -190,11 +226,11 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 						fmt.Println("total 0, no need cache", bodyValue)
 						needCache = false
 						firstBoot = false
-					} else if firstBoot { // 不需要缓存
-						bodyValue = "{\"items\":[],\"total\":0,\"limit\":1,\"offset\":0,\"has_missing_conversations\":false}"
+					} else if firstBoot || conversations.Total < CONVERSATION_NUM { // 不需要缓存
+						bodyValue = `{"items":[],"total":0,"limit":1,"offset":0,"has_missing_conversations":false}`
 						needCache = false
 						firstBoot = false
-						fmt.Println("first boot, no need cache", bodyValue)
+						fmt.Printf("first boot or total is %d, no need cache\n", conversations.Total)
 					}
 				} else {
 					var conversationItems conversation_items_struct
@@ -217,6 +253,7 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 				// 注意：必须把响应体重新设置回去，否则客户端无法接收到数据
 				res.Body = ioutil.NopCloser(bytes.NewBufferString(bodyValue))
 				res.ContentLength = (int64)(len(bodyValue))
+				res.Header.Set("Content-Length", strconv.Itoa(len(bodyValue)))
 				// 读出来后缓存起来
 				if needCache {
 					cachecenter.C.Set(key, bodyValue, cache.NoExpiration)
