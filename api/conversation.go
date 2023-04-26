@@ -4,17 +4,20 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go-gpt-server/cachecenter"
 	_ "go-gpt-server/env"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
@@ -25,16 +28,14 @@ const model = "text-davinci-002-render-sha"
 const CONVERSATION_NUM = 5
 
 var (
-	mutex         sync.Mutex
-	chatGPTClient *resty.Client
-	firstBoot     bool
-	sessionLocker *SessionLocker
-	MultiSession  bool
+	mutex            sync.Mutex
+	chatGPTClient    *resty.Client
+	firstBoot        bool
+	sessionLocker    *SessionLocker
+	MultiSession     bool
+	conversationIds  []string
+	conversationUsed map[string]bool
 )
-
-type conversations_struct struct {
-	Total int `json:"total"`
-}
 
 type conversation_struct struct {
 	Content         string `json:"content"`
@@ -90,6 +91,9 @@ func init() {
 	firstBoot = true
 	MultiSession = false
 
+	conversationIds = make([]string, CONVERSATION_NUM)
+	conversationUsed = make(map[string]bool)
+
 	// Create a new session locker
 	sessionLocker = NewSessionLocker()
 }
@@ -107,6 +111,73 @@ func ClearConvs() {
 	println("Clear all conversations")
 }
 
+func randomNum(conversationIds []string, conversationUsed map[string]bool, total int) (int, error) {
+	rand.Seed(time.Now().UnixNano())
+	unused := []int{}
+	for i, id := range conversationIds {
+		if !conversationUsed[id] && i < total {
+			unused = append(unused, i)
+		}
+	}
+	if len(unused) == 0 {
+		return 0, errors.New("会话被占完")
+	}
+	index := rand.Intn(len(unused))
+	return unused[index], nil
+}
+
+func getConversationIndex(total int) int {
+	if !MultiSession {
+		return 0
+	}
+	index := -1
+	for i := 0; i < len(conversationIds); i++ {
+		var err error
+		index, err = randomNum(conversationIds, conversationUsed, total)
+		if err != nil {
+			fmt.Println(err.Error())
+			return -1
+		}
+		fmt.Printf("取出的会话index是：%d\n", index)
+		break
+	}
+	return index
+}
+
+func handleResBody(resBody []byte) (int, string) {
+	// 将JSON字符串反序列化为一个map
+	var data map[string]interface{}
+	err := json.Unmarshal(resBody, &data)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	total := int(data["total"].(float64))
+	items := data["items"]
+	if items != nil {
+		println("before lock")
+		// mutex.Lock()
+		// defer mutex.Unlock()
+		for k, v := range items.([]interface{}) {
+			fmt.Printf("itemsData %v, %v\n", k, v.(map[string]interface{})["id"])
+			conversationIds = append(conversationIds, v.(map[string]interface{})["id"].(string))
+		}
+		println("after lock")
+	}
+	index := getConversationIndex(total)
+	// 在map中添加一个字段
+	data["index"] = index
+	data["multi"] = MultiSession
+
+	// 将map重新序列化为JSON字符串
+	resBodyNew, err := json.Marshal(data)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	return total, string(resBodyNew)
+}
+
 func HandleConv(w http.ResponseWriter, r *http.Request) {
 	apiType := r.Header.Get("Chat-Type")
 
@@ -119,10 +190,31 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 	println(key)
 
 	if r.Method == "GET" {
+		if apiType == "conversations" {
+			// 获取 URL 指针
+			u := r.URL
+
+			// 检查 URL 是否包含指定参数
+			q := u.Query()
+			if q.Get("limit") == "" {
+				// 如果 URL 中不包含指定参数，则添加该参数
+				q.Set("limit", strconv.Itoa(CONVERSATION_NUM))
+				u.RawQuery = q.Encode()
+			}
+			u.RawQuery = q.Encode()
+			key = r.URL.String() + ":" + apiType
+			println(key)
+		}
 		value, found := cachecenter.C.Get(key)
 		if found {
-			fmt.Printf("get key: %v, value:%v\n", key, value)
-			fmt.Fprintf(w, value.(string))
+			var valueString string
+			if apiType == "conversations" {
+				_, valueString = handleResBody([]byte(value.(string)))
+			} else {
+				valueString = value.(string)
+			}
+			fmt.Printf("get key: %v, value:%v\n", key, valueString)
+			fmt.Fprintf(w, valueString)
 			return
 		}
 	}
@@ -184,6 +276,9 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
 		if sessionLocker.Lock(sessionId) {
 			getLocked = true
+			// mutex.Lock()
+			// defer mutex.Unlock()
+			conversationUsed[conversationIdBak] = true
 		} else {
 			w.WriteHeader(http.StatusConflict)
 			return
@@ -192,7 +287,10 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		if getLocked {
+			// mutex.Lock()
+			// defer mutex.Unlock()
 			sessionLocker.Unlock(sessionId)
+			conversationUsed[conversationIdBak] = false
 		}
 	}()
 
@@ -220,24 +318,19 @@ func HandleConv(w http.ResponseWriter, r *http.Request) {
 				var bodyValue string
 				needCache := true
 				if apiType == "conversations" {
-					var conversations conversations_struct
-					// Unmarshal
-					err = json.Unmarshal(resBody, &conversations)
-					if err != nil {
-						fmt.Println("conversations Unmarshal", err.Error())
-						return err
-					}
-					bodyValue = string(resBody)
-					if conversations.Total == 0 { // 不需要缓存
+					var total int
+					total, bodyValue = handleResBody(resBody)
+					if total == 0 { // 不需要缓存
 						fmt.Println("total 0, no need cache", bodyValue)
 						needCache = false
 						firstBoot = false
-					} else if firstBoot || (MultiSession && conversations.Total < CONVERSATION_NUM) { // 不需要缓存
+					} else if firstBoot || (MultiSession && total < CONVERSATION_NUM) { // 不需要缓存
 						bodyValue = `{"items":[],"total":0,"limit":1,"offset":0,"has_missing_conversations":false}`
 						needCache = false
 						firstBoot = false
-						fmt.Printf("first boot or total is %d, no need cache\n", conversations.Total)
+						fmt.Printf("first boot or total is %d, no need cache\n", total)
 					}
+					println("bodyValue:", bodyValue)
 				} else {
 					var conversationItems conversation_items_struct
 					// Unmarshal
